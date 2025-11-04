@@ -1,0 +1,88 @@
+name: Playwright Tests
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight
+
+jobs:
+  test:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [16.x]
+        # Thêm nhiều browser nếu cần
+        browser: [chromium]
+        # Thêm nhiều test suites nếu cần
+        test-suite: [ui-test, api-test]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v2
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+
+    - name: Create env file
+      run: |
+        echo "NODE_ENV=ci" > .env
+        echo "BASE_API_URL=${{ secrets.BASE_API_URL }}" >> .env
+        echo "API_ACCESS_KEY=${{ secrets.API_ACCESS_KEY }}" >> .env
+        echo "API_SECRET_KEY=${{ secrets.API_SECRET_KEY }}" >> .env
+        echo "TEST_USER_EMAIL=${{ secrets.TEST_USER_EMAIL }}" >> .env
+        echo "TEST_USER_PASSWORD=${{ secrets.TEST_USER_PASSWORD }}" >> .env
+
+    - name: Run Playwright tests
+      run: |
+        npx playwright test tests/${{ matrix.test-suite }} --project=${{ matrix.browser }}
+      env:
+        CI: true
+        BROWSER: ${{ matrix.browser }}
+        HEADLESS: true
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v2
+      with:
+        name: playwright-report-${{ matrix.browser }}-${{ matrix.test-suite }}
+        path: |
+          playwright-report/
+          test-results/
+        retention-days: 30
+
+    - name: Upload test report to Report Portal
+      if: always()
+      run: |
+        # Add your report portal upload script here
+        echo "Uploading results to Report Portal"
+      env:
+        REPORT_PORTAL_URL: ${{ secrets.REPORT_PORTAL_URL }}
+        REPORT_PORTAL_PROJECT: ${{ secrets.REPORT_PORTAL_PROJECT }}
+        REPORT_PORTAL_TOKEN: ${{ secrets.REPORT_PORTAL_TOKEN }}
+
+  notify:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Send Slack notification
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow,job,took
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
